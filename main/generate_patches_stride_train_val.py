@@ -8,11 +8,11 @@ import patchify
 from utils.patch_utils import is_annot_center_in_patch, is_not_white
 
 PATCH_SIZE = 1000
-ROIS_PATH = "/mnt/folcon/01_ovary_cuts/ovaries_images"
-ANNOTATIONS_PATH = "/mnt/folcon/01_ovary_cuts/roi_annotation"
-PATCHES_SAVE_PATH = "/mnt/folcon/02_model_input/patches_stride_train_val"
-PATCHES_ANNOTATIONS_PATH = "/mnt/folcon/02_model_input/patches_annotation_stride_train_val.json"
-DATA_SLIT_PATH = "/mnt/folcon/02_model_input/annotations/data_split.json"
+ROIS_PATH = "data/01_ovary_cuts/ovaries_images"
+ANNOTATIONS_PATH = "data/01_ovary_cuts/roi_annotation"
+PATCHES_SAVE_PATH = "data/02_model_input/patches_stride_train_val"
+PATCHES_ANNOTATIONS_PATH = "data/02_model_input/patches_annotation_stride_train_val.json"
+DATA_SLIT_PATH = "data/02_model_input/annotations/data_split.json"
 
 
 def generate_patches_and_annotation(

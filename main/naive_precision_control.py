@@ -11,9 +11,9 @@ from utils.metrics import (
 
 warnings.filterwarnings("ignore")
 MODEL_NAME = "efficientdet"
-ANNOT_PATH = "/mnt/folcon/01_ovary_cuts/roi_annotation_united/all_annotations.json"
-PRED_PATH = f"/mnt/folcon/04_model_predictions/{MODEL_NAME}/results.json"
-SAVE_APTH = f"/mnt/folcon/05_LTT_results/{MODEL_NAME}/"
+ANNOT_PATH = "data/01_ovary_cuts/roi_annotation_united/all_annotations.json"
+PRED_PATH = f"data/04_model_predictions/{MODEL_NAME}/results.json"
+SAVE_APTH = f"data/05_LTT_results/{MODEL_NAME}/"
 THRESHOLDS_OBJ = np.linspace(.45, .8, 30)
 THRESHOLDS_DEPTH = np.linspace(.3, .8, 20)
 TARGET_PRECISION = .5

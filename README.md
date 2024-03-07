@@ -33,7 +33,7 @@ Once the file is unzipped, data is organized a follows:
     ├── ...
     └── follicle-risk-control
        ├── 01_ovary_cuts                    
-       │   ├── ovaries_images
+       │   ├── ovary_images
        |   |   ├──   0A_a/0A_a__roi0.tif
        |   |   ├──   0A_a/0A_a__roi1.tif
        |   |   ├──   ...
@@ -41,17 +41,9 @@ Once the file is unzipped, data is organized a follows:
        |   |   ├──   2A_g/2A_g__roi1.tif
        |   |   ├──   2A_g/2A_g__roi2.tif
        |   |   ├──   ...
-       │   ├── ovaries_annotations    
-       |   |   ├── 0A_a$0A_a__roi0$.json
-       |   |   ├── 0A_a$0A_a__roi1$.json
-       |   |   ├── ...
-       |   |   ├── 2M05$0A_a__roi7$.json   
-       |   |   ├── ...
-       │   └── data_split.json 
+       │   └── ovaries_annotations.json    
        └── 03_model_weights
-               ├── efficientdet
-               |   └──   */*.ckpt
-               └── det   
+               └── efficientdet
                    └──   */*.ckpt
 
 ✂️ Create patches and annotations to train OD models

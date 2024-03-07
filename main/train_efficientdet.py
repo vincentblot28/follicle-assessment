@@ -12,14 +12,14 @@ from utils.efficientdet.dataset import EfficientDetDataModule
 from utils.efficientdet.efficientdet import EfficientDetModel
 
 
-EFFICIENTDET_MODELS_DIR = "/mnt/folcon/03_model_weights/efficientdet"
+EFFICIENTDET_MODELS_DIR = "data/03_model_weights/efficientdet"
 MODEL_NAME = "tf_efficientdet_d4"
 PATCH_SIZE = 512
-TRAIN_VAL_SLIDES_DIR = "/mnt/folcon/02_model_input/data_split.json"
-PATCHES_PATH = "/mnt/folcon/02_model_input/patches_stride_train_val"
-TRAINING_EXAMPLES_PATH = "/mnt/folcon/02_model_input/train_val_annotations_negative.json"
-PATCHES_PATH_STRIDE = "/mnt/folcon/02_model_input/patches_stride_train_val"
-TRAINING_EXAMPLES_PATH_STRIDE = "/mnt/folcon/02_model_input/patches_annotation_stride_train_val.json"
+TRAIN_VAL_SLIDES_DIR = "data/02_model_input/data_split.json"
+PATCHES_PATH = "data/02_model_input/patches_stride_train_val"
+TRAINING_EXAMPLES_PATH = "data/02_model_input/train_val_annotations_negative.json"
+PATCHES_PATH_STRIDE = "data/02_model_input/patches_stride_train_val"
+TRAINING_EXAMPLES_PATH_STRIDE = "data/02_model_input/patches_annotation_stride_train_val.json"
 WITH_STRIDE = False
 MODEL_PARAMS = {
     "learning_rate": 0.001,

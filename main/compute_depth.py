@@ -8,8 +8,8 @@ from utils.depths_utils import binarize_image, get_contours, get_depths
 from utils.img_read_utils import read_image
 
 
-IMG_PATH = "/mnt/folcon/01_ovary_cuts/ovaries_images"
-PREDS_PATH = "/mnt/folcon/04_model_predictions/efficientdet/results.json"
+IMG_PATH = "data/01_ovary_cuts/ovaries_images"
+PREDS_PATH = "data/04_model_predictions/efficientdet/results.json"
 
 
 def compute_depth(img_paths, pred_path, resolution=1):

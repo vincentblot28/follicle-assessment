@@ -45,15 +45,15 @@ MODEL_PARAMS = {
     "lr_warmup_epoch": 1
 }
 PATCH_SIZE = 1000
-OVARY_PATH = "/mnt/folcon/01_ovary_cuts/ovaries_images"
+OVARY_PATH = "data/01_ovary_cuts/ovaries_images"
 CLASS_NAME_VALUES = {1: "PMF", 2: "Primary", 3: "Secondary"}
 BBOXES_SIZE_PARAMS = {
     "PMF": {"width": 200, "height": 200},
     "Primary": {"width": 350, "height": 350},
     "Secondary": {"width": 450, "height": 450}
 }
-SAVE_PREDICTIONS_PATH = "/mnt/folcon/04_model_predictions/efficientdet/results.json"
-DATA_SPLIT_PATH = "/mnt/folcon/02_model_input/data_split.json"
+SAVE_PREDICTIONS_PATH = "data/04_model_predictions/efficientdet/results.json"
+DATA_SPLIT_PATH = "data/02_model_input/data_split.json"
 
 
 def predict_efficientdet(model_path,
