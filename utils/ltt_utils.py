@@ -1,7 +1,10 @@
+
 import numpy as np
 from mapie.control_risk.ltt import ltt_procedure
+from sklearn.model_selection import KFold
+from tqdm import tqdm
 
-from utils.metrics import match_annotations_and_predictions
+from utils.metrics import match_annotations_and_predictions, compute_precision, compute_2D_precision, compute_2D_recall
 
 
 def run_ltt(precisions, delta, y, target_precision, with_depth, ths_obj, ths_depth=None, cal_recalls=None):
@@ -126,3 +129,99 @@ def create_x_y(
             x.extend([0] * (max_len_y - len(x)))
 
     return np.array(X), np.array(y)
+
+
+def run_ltt_cv(
+        annotations, predictions,
+        target_precision, iou_th,
+        ths_obj, ths_depth, classes,
+        with_depth, delta
+):
+
+    kf = KFold(n_splits=len(predictions))
+
+    slide_names = list(predictions.keys())
+    results = {}
+
+    for cal_index, test_index in tqdm(
+        kf.split(slide_names), total=kf.get_n_splits()
+    ):
+        sld_cal = np.array(slide_names)[cal_index]
+        sld_test = np.array(slide_names)[test_index][0]
+        results[sld_test] = {
+            "best_th_obj": [],
+            "best_th_depth": [],
+        }
+        X_cal, y_cal = create_x_y(
+            sld_cal, annotations, predictions, iou_th,
+            classes, with_depth
+        )
+        if with_depth:
+            cal_precisions = compute_2D_precision(
+                lambdas_obj=ths_obj, lambdas_depths=ths_depth,
+                y_pred_proba=X_cal, y=y_cal
+            )
+            cal_precisions = np.nanmean(cal_precisions, axis=0)
+            cal_recalls = compute_2D_recall(
+                lambdas_obj=ths_obj, lambdas_depths=ths_depth,
+                y_pred_proba=X_cal, y=y_cal
+            )
+            cal_recalls = np.nanmean(cal_recalls, axis=0)
+            best_th_obj, best_th_depth = run_ltt(
+                precisions=cal_precisions, delta=delta, y=y_cal,
+                target_precision=target_precision, with_depth=with_depth,
+                ths_obj=ths_obj, ths_depth=ths_depth, cal_recalls=cal_recalls
+            )
+            results[sld_test]["best_th_obj"].append(best_th_obj)
+            results[sld_test]["best_th_depth"].append(best_th_depth)
+        else:
+            cal_precisions = compute_precision(
+                lambdas=ths_obj,
+                y_pred_proba=X_cal[:, :, np.newaxis], y=y_cal
+            )
+            cal_precisions = np.nanmean(cal_precisions, axis=0)
+            best_th = run_ltt(
+                precisions=cal_precisions, delta=delta, y=y_cal,
+                target_precision=target_precision, with_depth=with_depth,
+                ths_obj=ths_obj
+            )
+            results[sld_test]["best_th_obj"].append(best_th)
+
+    return results
+
+
+def run_naive_precision_contorl(
+        annotations, predictions,
+        target_precision, iou_th,
+        ths_obj, classes
+):
+
+    kf = KFold(n_splits=len(predictions))
+
+    slide_names = list(predictions.keys())
+    results = {}
+
+    for cal_index, test_index in tqdm(
+        kf.split(slide_names), total=kf.get_n_splits()
+    ):
+        sld_cal = np.array(slide_names)[cal_index]
+        sld_test = np.array(slide_names)[test_index][0]
+        results[sld_test] = {
+            "best_th_obj": [],
+            "best_th_depth": [],
+        }
+        X_cal, y_cal = create_x_y(
+            sld_cal, annotations, predictions, iou_th,
+            classes, with_depth=False
+        )
+
+        cal_precisions = compute_precision(
+            lambdas=ths_obj,
+            y_pred_proba=X_cal[:, :, np.newaxis], y=y_cal
+        )
+        cal_precisions = np.nanmean(cal_precisions, axis=0)
+        best_th = ths_obj[np.argmin(np.abs(cal_precisions - target_precision))]
+
+        results[sld_test]["best_th_obj"].append(best_th)
+
+    return results

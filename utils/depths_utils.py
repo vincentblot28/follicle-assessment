@@ -109,3 +109,30 @@ def get_depths(contour_vect, mask, box, factor=100):
     print("Total time: " + str(time.time() - time0))
 
     return depths
+
+
+def compute_prediction_depths(img, predictions, resolution):
+    img = cv2.resize(img, (img.shape[1] // resolution, img.shape[0] // resolution))
+    img_bin = binarize_image(img)
+    mask_filled, contour_max = get_contours(img_bin)
+    if len(predictions) > 0:
+        preds_roi_center = np.concatenate(
+            [
+                [(predictions[:, 1] + predictions[:, 3]) / 2],
+                [(predictions[:, 0] + predictions[:, 2]) / 2]
+            ],
+            axis=0
+        ).T.astype(int) // resolution
+        preds_roi_center = np.maximum(preds_roi_center - 1, 0)
+        preds_roi_center[:, 0] = np.minimum(preds_roi_center[:, 0], img.shape[0] - 1)
+        preds_roi_center[:, 1] = np.minimum(preds_roi_center[:, 1], img.shape[1] - 1)
+
+        # Get thedepth of each prediction
+        depths = get_depths(
+            contour_max, mask_filled,
+            preds_roi_center, factor=int(100 / resolution)
+        )
+    else:
+        depths = np.array([])
+
+    return depths

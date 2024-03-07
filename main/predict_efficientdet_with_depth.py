@@ -10,6 +10,7 @@ import patchify
 import torch
 from tqdm import tqdm
 
+from utils.depths_utils import compute_prediction_depths
 from utils.efficientdet.dataset import get_valid_transforms
 from utils.efficientdet.efficientdet import EfficientDetModel
 from utils.patch_utils import is_not_white
@@ -17,21 +18,8 @@ from utils.patch_utils import is_not_white
 
 warnings.filterwarnings("ignore")
 
-MODEL_PATH = "/home/innerve/folcon/data/04_models/prod/latest_efficientdet_d2_20230602_1611_val_loss=1.99.ckpt"
-# MODEL_PARAMS = {
-#     "learning_rate": 0.0001,
-#     "prediction_confidence_threshold": 0.45,
-#     "wbf_iou_threshold": 0.25,
-#     "model_architecture": "tf_efficientdet_d2",
-#     "num_workers": 4,
-#     "batch_size": 16,
-#     "max_epochs": 100,
-#     "config": {
-#         "num_classes": 3,  # Artefact during the training
-#         "img_size": [768, 768],
-#     },
-#     "lr_warmup_epoch": 1
-# }
+MODEL_PATH = "data/03_model_weights/efficientdet/effdet_model.ckpt"
+
 MODEL_PARAMS = {
     "learning_rate": 0.0001,
     "prediction_confidence_threshold": 0.45,
@@ -45,7 +33,7 @@ MODEL_PARAMS = {
     "lr_warmup_epoch": 1
 }
 PATCH_SIZE = 1000
-OVARY_PATH = "data/01_ovary_cuts/ovaries_images"
+OVARY_PATH = "data/01_ovary_cuts/ovary_images"
 CLASS_NAME_VALUES = {1: "PMF", 2: "Primary", 3: "Secondary"}
 BBOXES_SIZE_PARAMS = {
     "PMF": {"width": 200, "height": 200},
@@ -53,14 +41,12 @@ BBOXES_SIZE_PARAMS = {
     "Secondary": {"width": 450, "height": 450}
 }
 SAVE_PREDICTIONS_PATH = "data/04_model_predictions/efficientdet/results.json"
-DATA_SPLIT_PATH = "data/02_model_input/data_split.json"
 
 
 def predict_efficientdet(model_path,
                          model_params: Dict[str, Any],
                          patch_size: int,
                          ovary_path: str,
-                         data_split: Dict,
                          class_name_values: Dict[int, str],
                          bboxes_size_params
                          ) -> Dict[str, Dict[str, Any]]:
@@ -74,7 +60,8 @@ def predict_efficientdet(model_path,
     model.inference_tfms = get_valid_transforms(with_ground_truth=False)
 
     predictions = {}
-    for ovary_id in tqdm(data_split["test"]):
+    # for ovary_id in tqdm(os.listdir(os.path.join(os.getcwd(), ovary_path))):
+    for ovary_id in tqdm(os.listdir(ovary_path)):
         predictions[ovary_id] = {}
         for cut_name in os.listdir(os.path.join(ovary_path, ovary_id)):
             roi_name = re.findall(r"roi\d+", cut_name)[0]
@@ -110,21 +97,18 @@ def predict_efficientdet(model_path,
                                 predictions[ovary_id][roi_name]["bboxes"].append(new_bbox.tolist())
                                 predictions[ovary_id][roi_name]["scores"].append(pred_confs[0][i])
                                 predictions[ovary_id][roi_name]["classes"].append(class_name)
-        #     break
+            depths = compute_prediction_depths(cut, np.array(predictions[ovary_id][roi_name]["bboxes"]), resolution=10)
+            predictions[ovary_id][roi_name]["depths"] = depths.tolist()
         # break
     return predictions
 
 
 if __name__ == "__main__":
-    with open(DATA_SPLIT_PATH, "r") as f:
-        data_split = json.load(f)
-
     predictions = predict_efficientdet(
         model_path=MODEL_PATH,
         model_params=MODEL_PARAMS,
         patch_size=PATCH_SIZE,
         ovary_path=OVARY_PATH,
-        data_split=data_split,
         class_name_values=CLASS_NAME_VALUES,
         bboxes_size_params=BBOXES_SIZE_PARAMS
     )

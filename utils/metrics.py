@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 from mapie._typing import NDArray
 from sklearn.utils.validation import column_or_1d
-from shapely.geometry import Polygon
 
 
 def compute_iou_matrix(annotation_boxes, pred_boxes):

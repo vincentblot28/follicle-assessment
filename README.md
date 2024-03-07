@@ -98,18 +98,8 @@ The output of the inference is a `json` file of the following shape:
 }
 ```
 
-Inference files for both model are saved in their respective directories: `04_model_output/efficientdet/result.json`
-
-📏 Compute the depth of the predictions
-===============
-We define the depth of a box as its normalized distance distance to the boundary of the ovary. Hence, a box predicted exactly at the center of the ovary will have a depth of 1, while a box predicted at the boundary of the ovary will have a depth of 0. To compute the depth of the previously computed prediction run
-
-```
-$ python main/compute_depth.py
-```
-
-This code will update the predictions of the model by adding a new information in the predicted boxes.
-
+Inference files for both model are saved in their respective directories with the depth of each prediction already computed: `04_model_output/efficientdet/result.json`
 
 ✅ Run the LTT procedure
 ===============
+The LTT procedure can be run is the notebook : `notebooks/analyse_ltt.ipynb`
