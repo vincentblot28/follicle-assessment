@@ -21,7 +21,7 @@ $ conda install -f env.yml
 📚 Data Availability
 ===============
 
-Download the file here and then run 
+Download the file [here](https://drive.google.com/file/d/1Ry0w6sU22-kpv2Z31HfSYUEFlvKYuXkO/view?usp=sharing) and then run 
 
 ```
 $ unzip ovary_cut.zip
