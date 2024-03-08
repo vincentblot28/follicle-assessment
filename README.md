@@ -7,11 +7,6 @@ Python 3.8+
 
 
 Install the required packages:
-- Via `pip`:
-
-```
-$ pip install -r requirements.txt
-```
 
 - Via conda:
 ```
