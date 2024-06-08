@@ -4,70 +4,51 @@ import re
 import warnings
 from typing import Any, Dict
 
+import sys
+sys.path.append("/home/vblot/follicle-assessment/")
+
 import cv2
 import numpy as np
 import patchify
-import torch
 from tqdm import tqdm
+from ultralytics import YOLO
 
 from utils.depths_utils import compute_prediction_depths
-from utils.efficientdet.dataset import get_valid_transforms
-from utils.efficientdet.efficientdet import EfficientDetModel
 from utils.patch_utils import is_not_white
 
 
 warnings.filterwarnings("ignore")
 
-MODEL_PATH = "data/03_model_weights/efficientdet/effdet_model.ckpt"
-
-MODEL_PARAMS = {
-    "learning_rate": 0.0001,
-    "prediction_confidence_threshold": 0.45,
-    "wbf_iou_threshold": 0.2,
-    "model_architecture": "tf_efficientdet_d2",
-    "num_workers": 4,
-    "batch_size": 16,
-    "max_epochs": 100,
-    "num_classes": 90,  # Artefact during the training
-    "img_size": 768,
-    "lr_warmup_epoch": 1
-}
+MODEL_PATH = "/home/vblot/yolo_ultralytics/runs/detect/train5/weights/best.pt"
 PATCH_SIZE = 1000
-OVARY_PATH = "data/01_ovary_cuts/ovary_images"
-CLASS_NAME_VALUES = {1: "PMF", 2: "Primary", 3: "Secondary"}
+OVARY_PATH = "/mnt/folcon/01_ovary_cuts/ovaries_images"
+CLASS_NAME_VALUES = {0: "PMF", 1: "Primary", 2: "Secondary"}
 BBOXES_SIZE_PARAMS = {
     "PMF": {"width": 200, "height": 200},
     "Primary": {"width": 350, "height": 350},
     "Secondary": {"width": 450, "height": 450}
 }
-SAVE_PREDICTIONS_PATH = "data/04_model_predictions/efficientdet/results.json"
+SAVE_PREDICTIONS_PATH = "data/04_model_predictions/yolo/results.json"
+DATA_SPLIT_PATH = "/mnt/folcon/02_model_input/data_split.json"
 
 
 def predict_efficientdet(model_path,
-                         model_params: Dict[str, Any],
                          patch_size: int,
                          ovary_path: str,
+                         data_split: Dict,
                          class_name_values: Dict[int, str],
                          bboxes_size_params
                          ) -> Dict[str, Dict[str, Any]]:
 
-    model = EfficientDetModel.load_from_checkpoint(model_path, **model_params)
-    if torch.cuda.is_available():
-        model.eval().cuda(device=0)
-    else:
-        model.eval()
-
-    model.inference_tfms = get_valid_transforms(with_ground_truth=False)
-
+    model = YOLO(model_path)
     predictions = {}
     # for ovary_id in tqdm(os.listdir(os.path.join(os.getcwd(), ovary_path))):
-    for ovary_id in tqdm(os.listdir(ovary_path)):
+    for ovary_id in tqdm(data_split["test"]):
         predictions[ovary_id] = {}
         for cut_name in os.listdir(os.path.join(ovary_path, ovary_id)):
             roi_name = re.findall(r"roi\d+", cut_name)[0]
             predictions[ovary_id][roi_name] = {"bboxes": [], "scores": [], "classes": []}
             cut = cv2.imread(os.path.join(ovary_path, ovary_id, cut_name))
-            cut = cv2.cvtColor(cut, cv2.COLOR_BGR2RGB)
             patches = patchify.patchify(cut, (patch_size, patch_size, 3), step=patch_size)
             for ix in range(patches.shape[0]):
                 for iy in range(patches.shape[1]):
@@ -77,25 +58,26 @@ def predict_efficientdet(model_path,
                         patch_row = ix
                         patch_col = iy
 
-                        pred_boxes, pred_classes, pred_confs, _ = model.predict([patch])
+                        result = model(patch, verbose=False)[0]
+                        pred_classes = result.boxes.cls.detach().cpu().numpy()
+                        pred_boxes = result.boxes.xyxy.detach().cpu().numpy()
+                        pred_confs = result.boxes.conf.detach().cpu().numpy()
                         if len(pred_boxes) > 0:
-                            for i in range(len(pred_boxes[0])):
-                                mean_x = (pred_boxes[0][i][0] + pred_boxes[0][i][2]) / 2  # predicted_bboxes[0][i][2]
-                                mean_y = (pred_boxes[0][i][1] + pred_boxes[0][i][3]) / 2  # predicted_bboxes[0][i][3]
-                                predicted_center = [mean_x, mean_y]  # predicted_bboxes[0][i]
-                                predicted_center[0] = predicted_center[0] + patch_row * patch_size
-                                predicted_center[1] = predicted_center[1] + patch_col * patch_size
-                                class_label = pred_classes[0][i]
+                            for i in range(len(pred_boxes)):
+                                x1 = pred_boxes[i][0] + patch_col * patch_size
+                                y1 = pred_boxes[i][1] + patch_row * patch_size
+
+                                class_label = pred_classes[i]
                                 class_name = class_name_values[int(class_label)]
                                 new_bbox_width = bboxes_size_params[class_name]["width"]
                                 new_bbox_height = bboxes_size_params[class_name]["height"]
                                 new_bbox = np.zeros(4)
-                                new_bbox[1] = predicted_center[0] - new_bbox_width / 2
-                                new_bbox[0] = predicted_center[1] - new_bbox_height / 2
-                                new_bbox[3] = predicted_center[0] + new_bbox_width / 2
-                                new_bbox[2] = predicted_center[1] + new_bbox_height / 2
+                                new_bbox[0] = x1
+                                new_bbox[1] = y1
+                                new_bbox[2] = x1 + new_bbox_width
+                                new_bbox[3] = y1 + new_bbox_height
                                 predictions[ovary_id][roi_name]["bboxes"].append(new_bbox.tolist())
-                                predictions[ovary_id][roi_name]["scores"].append(pred_confs[0][i])
+                                predictions[ovary_id][roi_name]["scores"].append(float(pred_confs[i]))
                                 predictions[ovary_id][roi_name]["classes"].append(class_name)
             depths = compute_prediction_depths(cut, np.array(predictions[ovary_id][roi_name]["bboxes"]), resolution=10)
             predictions[ovary_id][roi_name]["depths"] = depths.tolist()
@@ -104,11 +86,14 @@ def predict_efficientdet(model_path,
 
 
 if __name__ == "__main__":
+    with open(DATA_SPLIT_PATH, "r") as f:
+        data_split = json.load(f)
+
     predictions = predict_efficientdet(
         model_path=MODEL_PATH,
-        model_params=MODEL_PARAMS,
         patch_size=PATCH_SIZE,
         ovary_path=OVARY_PATH,
+        data_split=data_split,
         class_name_values=CLASS_NAME_VALUES,
         bboxes_size_params=BBOXES_SIZE_PARAMS
     )
