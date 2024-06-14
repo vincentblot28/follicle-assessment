@@ -14,6 +14,9 @@ numpy = "^1.26.4"
 mapie = "^0.8.3"
 ipykernel = "^6.29.4"
 tqdm = "^4.66.2"
+jupyter = "^1.0.0"
+ttach = "^0.0.3"
+yolov8-explainer = "^0.0.5"
 
 
 [build-system]
