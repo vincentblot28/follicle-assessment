@@ -3,3 +3,4 @@ data/*
 notebooks/temp.ipynb
 *.pdf
 *.pyc
+runs/*

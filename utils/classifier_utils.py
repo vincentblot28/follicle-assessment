@@ -21,13 +21,97 @@ class FollicleDataset():
     def __getitem__(self,index):
         imgpath = os.path.join(self.root_img_dir, self.filelist[index])
         img = Image.open(imgpath)
-        label = self.labels[list(self.labels.keys())[index]]
+        label = self.labels[self.filelist[index].split(".")[0]]
         if self.transform is not None:
             img = self.transform(img)
         if self.dataset_type == "train":    
-            return img,label
+            return img, int(label)
         else:
             return img 
+
+class DogvCatDataset():
+    def __init__(self,dataset_type, root_img_dir, labels=None,transform = None):
+        self.dataset_type = dataset_type
+        self.root_img_dir = root_img_dir
+        self.filelist = os.listdir(root_img_dir)
+        self.transform = transform
+        self.labels = labels
+    def __len__(self):
+        return int(len(self.filelist))
+    def __getitem__(self,index):
+        imgpath = os.path.join(self.root_img_dir, self.filelist[index])
+        img = Image.open(imgpath)
+        #resize image to (256, 256)
+        img = img.resize((256, 256))
+        label = "cat" in self.filelist[index]
+        if self.transform is not None:
+            img = self.transform(img)
+        if self.dataset_type == "train":    
+            return img, int(label)
+        else:
+            return img 
+
+
+class DataModule(pl.LightningDataModule):
+    def __init__(self, data_path, labels, batch_size):
+        super().__init__()
+        self.data_path = data_path
+        self.labels = labels
+        self.batch_size = batch_size
+        
+    def prepare_data(self):
+
+        self.train_transform = Compose([
+            # RandomHorizontalFlip(p=0.5),
+            # RandomVerticalFlip(p=0.5),
+            # RandomApply(torch.nn.ModuleList([RandomRotation(degrees=(90, 90))]), p=.5),
+            # ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1),  # Randomly adjust color
+            # RandomHorizontalFlip(p=0.5),
+            ToTensor(),
+            Normalize(mean=[0.65, 0.475, 0.758], std=[0.08, 0.133, 0.065]),
+        ])
+
+        self.test_transform = Compose([
+            ToTensor(),
+            Normalize(mean=[0.65, 0.475, 0.758], std=[0.08, 0.133, 0.065]),
+        ])
+        return
+
+    def setup(self, stage=None):
+        train = DogvCatDataset(
+            dataset_type="train", root_img_dir=self.data_path,
+            labels=self.labels, transform=self.train_transform
+        )
+
+        self.test = DogvCatDataset(
+            dataset_type="test", root_img_dir=self.data_path,
+            labels=self.labels, transform=self.test_transform
+        )
+        n_train = int(len(train) * 0.8)
+        n_valid = len(train) - n_train
+        self.train, self.valid = random_split(train, lengths=[n_train, n_valid])
+
+    def train_dataloader(self):
+        train_loader = DataLoader(dataset=self.train, 
+                                  batch_size=self.batch_size, 
+                                  drop_last=True,
+                                  shuffle=True)
+        return train_loader
+
+    def val_dataloader(self):
+        valid_loader = DataLoader(dataset=self.valid, 
+                                  batch_size=self.batch_size, 
+                                  drop_last=False,
+                                  shuffle=False)
+        return valid_loader
+
+    def test_dataloader(self):
+        test_loader = DataLoader(dataset=self.test, 
+                                 batch_size=self.batch_size, 
+                                 drop_last=False,
+                                 shuffle=False)
+        return test_loader
+
 
 # LightningModule that receives a PyTorch model as input
 class LightningModel(pl.LightningModule):
@@ -64,14 +148,14 @@ class LightningModel(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         loss, true_labels, predicted_labels = self._shared_step(batch)
-        self.log("train_loss", loss)
+        self.log("train_loss", loss, on_step=True, prog_bar=True)
         
         # To account for Dropout behavior during evaluation
         self.model.eval()
         with torch.no_grad():
             _, true_labels, predicted_labels = self._shared_step(batch)
         self.train_acc.update(predicted_labels, true_labels)
-        self.log("train_acc", self.train_acc, on_epoch=True, on_step=False)
+        self.log("train_acc", self.train_acc, on_epoch=True, on_step=True, prog_bar=True)
         self.model.train()
         return loss  # this is passed to the optimzer for training
 
@@ -88,66 +172,5 @@ class LightningModel(pl.LightningModule):
         self.log("test_acc", self.test_acc, on_epoch=True, on_step=False)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
         return optimizer
-
-
-class DataModule(pl.LightningDataModule):
-    def __init__(self, data_path, labels, batch_size):
-        super().__init__()
-        self.data_path = data_path
-        self.labels = labels
-        self.batch_size = batch_size
-        
-    def prepare_data(self):
-
-        self.train_transform = Compose([
-            RandomHorizontalFlip(p=0.5),
-            RandomVerticalFlip(p=0.5),
-            RandomApply(torch.nn.ModuleList([RandomRotation(degrees=(90, 90))]), p=.5),
-            ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1),  # Randomly adjust color
-            RandomHorizontalFlip(p=0.5),
-            ToTensor(),
-            Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
-
-        self.test_transform = Compose([
-            ToTensor(),
-            Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
-        return
-
-    def setup(self, stage=None):
-        train = FollicleDataset(
-            dataset_type="train", root_img_dir=self.data_path,
-            labels=self.labels, transform=self.train_transform
-        )
-
-        self.test = FollicleDataset(
-            dataset_type="test", root_img_dir=self.data_path,
-            labels=self.labels, transform=self.test_transform
-        )
-        n_train = int(len(train) * 0.8)
-        n_valid = len(train) - n_train
-        self.train, self.valid = random_split(train, lengths=[n_train, n_valid])
-
-    def train_dataloader(self):
-        train_loader = DataLoader(dataset=self.train, 
-                                  batch_size=self.batch_size, 
-                                  drop_last=True,
-                                  shuffle=True)
-        return train_loader
-
-    def val_dataloader(self):
-        valid_loader = DataLoader(dataset=self.valid, 
-                                  batch_size=self.batch_size, 
-                                  drop_last=False,
-                                  shuffle=False)
-        return valid_loader
-
-    def test_dataloader(self):
-        test_loader = DataLoader(dataset=self.test, 
-                                 batch_size=self.batch_size, 
-                                 drop_last=False,
-                                 shuffle=False)
-        return test_loader
