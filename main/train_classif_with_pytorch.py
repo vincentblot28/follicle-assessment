@@ -59,12 +59,12 @@ dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
 for lr in [1e-7, 1e-6, 1e-5, 1e-4]:
     for wd in [0, 1e-4, 1e-3, 1e-2, 1e-1]:
         #  Load the pre-trained VGG16 model
-        model = models.vgg16(pretrained=True)
+        model = models.resnet152(pretrained=True)
 
 
         # Modify the classifier part of the model for binary classification
-        num_features = model.classifier[6].in_features
-        model.classifier[6] = nn.Linear(num_features, 2)
+        num_ftrs = model.fc.in_features
+        model.fc = nn.Linear(num_ftrs, 2)
 
         model = model.to(device)
 
@@ -75,7 +75,7 @@ for lr in [1e-7, 1e-6, 1e-5, 1e-4]:
         # Training and evaluation function
         # Training and evaluation function
         model_name = datetime.now().strftime("%Y-%m-%d-%H-%M")
-        model_name = f"{model_name}_lr={lr}_wd={wd}"
+        model_name = "resnet152_" + f"{model_name}_lr={lr}_wd={wd}"
         writer = SummaryWriter(f'runs/{model_name}')
 
         def train_model(model, criterion, optimizer, num_epochs=25, log_interval=20):
