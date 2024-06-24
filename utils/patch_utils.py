@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 
 
@@ -42,3 +43,23 @@ def is_annot_center_in_patch(x, y, size):
         True if the box center lies within the image, False otherwise.
     """
     return ((0 < x) and (0 < y) and (x < size) and (y < size))
+
+
+def create_img_to_classif_from_box(pred_box, cut, box_size):
+    x0, y0, x1, y1 = np.array(pred_box).astype(int)
+    center = (x0 + x1) // 2, (y0 + y1) // 2
+    x0, y0 = center[0] - box_size // 2, center[1] - box_size // 2
+    x1, y1 = x0 + box_size, y0 + box_size
+    x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+    x0 = max(0, x0)
+    y0 = max(0, y0)
+    x1 = min(cut.shape[1], x1)
+    y1 = min(cut.shape[0], y1)
+
+    img_to_classif = cut[y0:y1, x0:x1]
+    if img_to_classif.shape != (box_size, box_size, 3):
+        print(img_to_classif.shape)
+        img_to_classif = cv2.resize(img_to_classif, (box_size, box_size))
+    img_to_classif = cv2.cvtColor(img_to_classif, cv2.COLOR_BGR2RGB)
+    
+    return img_to_classif

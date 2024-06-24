@@ -79,7 +79,7 @@ def match_annotations_and_predictions(
 
 
 def create_class_matrix(gt_classes, pred_classes, n_annot, n_pred):
-    if pred_classes is None:
+    if True: # pred_classes is None:
         return np.ones((n_annot, n_pred))
     else:
         num_gt_classes = len(gt_classes)

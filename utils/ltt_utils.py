@@ -171,7 +171,7 @@ def _h1(
     return elt1 + elt2
 
 
-def run_ltt(precisions, delta, y, target_precision, with_depth, ths_obj, ths_depth=None, cal_recalls=None, step_fst=None):
+def run_ltt(precisions, delta, y, target_precision, other_variable, ths_obj, ths_depth=None, cal_recalls=None, step_fst=None):
     """
     Run the LTT procedure to find the best threshold for the objectness and depth.
     """
@@ -179,16 +179,16 @@ def run_ltt(precisions, delta, y, target_precision, with_depth, ths_obj, ths_dep
     n_obs = len(y)
     risks = 1 - np.array(precisions)
     if step_fst is None:
-        if with_depth:
+        if other_variable is not None:
             risks = risks.ravel()
         valid_index, _ = ltt_bonferoni(risks, alpha, delta, n_obs)
         valid_index = valid_index[0]
     else:
-        if with_depth:
+        if  other_variable is not None:
             valid_index = ltt_fst_depth(risks, alpha, delta, n_obs)
         else:
             valid_index = ltt_fst_univariate(risks, alpha, delta, n_obs)
-    if with_depth:
+    if  other_variable is not None:
 
         matrix_valid = np.zeros((len(ths_obj), len(ths_depth)))
         if step_fst is not None:
@@ -197,7 +197,7 @@ def run_ltt(precisions, delta, y, target_precision, with_depth, ths_obj, ths_dep
         else:
             matrix_valid[
                 np.unravel_index(
-                    np.array(valid_index[0]),
+                    np.array(valid_index),
                     (matrix_valid.shape)
                 )
             ] = 1
@@ -210,9 +210,11 @@ def run_ltt(precisions, delta, y, target_precision, with_depth, ths_obj, ths_dep
             ths_depth[best_recall[1]]
         return best_th_obj, best_th_depth
     else:
-        valid_index = valid_index[0]
-
-        best_th = ths_obj[valid_index]
+        if len(valid_index) == 0:
+            best_th = 1
+        else:
+            valid_index = valid_index[0]
+            best_th = ths_obj[valid_index]
         return best_th
 
 
@@ -238,55 +240,59 @@ def select_boxes_classe(boxes, classes, class_, scores=None, depths=None):
 
 def create_dataset(
         annotations, predictions, slide_name,
-        roi_name, iou_th, with_depth=True, classes="all"
+        roi_name, iou_th, other_variable="depths", classes="all"
 ):
-
+    has_other_variable = int(other_variable is not None)
     gt_boxes = np.array(annotations[slide_name][roi_name]["bboxes"])
     gt_classes = np.array(annotations[slide_name][roi_name]["classes"])
     pred_boxes = np.array(predictions[slide_name][roi_name]["bboxes"])
     pred_classes = np.array(predictions[slide_name][roi_name]["classes"])
     pred_scores = np.array(predictions[slide_name][roi_name]["scores"])
     pred_classes = np.array(predictions[slide_name][roi_name]["classes"])
-    depths = np.array(predictions[slide_name][roi_name]["depths"])
+    if other_variable is not None:
+        other_variable_value = np.array(predictions[slide_name][roi_name][other_variable])
+    else:
+        other_variable_value = np.array(predictions[slide_name][roi_name]["depths"])
     if classes != "all":
         gt_boxes, gt_classes = select_boxes_classe(
             gt_boxes, gt_classes, classes
         )
-        pred_boxes, pred_classes, pred_scores, depths = select_boxes_classe(
-            pred_boxes, pred_classes, classes, pred_scores, depths
+        pred_boxes, pred_classes, pred_scores, other_variable_value = select_boxes_classe(
+            pred_boxes, pred_classes, classes, pred_scores, other_variable_value
         )
 
     matched_annots, matched_preds = match_annotations_and_predictions(
         gt_boxes, pred_boxes, gt_classes, pred_classes, iou_th
     )
     n_unmatched_gt = len(gt_boxes) - len(matched_annots)
-    data_temp = np.zeros((len(pred_boxes), 2 + with_depth))
+
+    data_temp = np.zeros((len(pred_boxes), 2 + has_other_variable))
     data_temp[:, 0] = pred_scores
-    if with_depth:
-        data_temp[:, 1] = depths
-    data_temp[matched_preds, 1 + with_depth] = 1
-    data_unmatched = np.zeros((n_unmatched_gt, 2 + with_depth))
-    data_unmatched[:, 1 + with_depth] = 1
+    if other_variable is not None:
+        data_temp[:, 1] = other_variable_value
+    data_temp[matched_preds, 1 + has_other_variable] = 1
+    data_unmatched = np.zeros((n_unmatched_gt, 2 + has_other_variable))
+    data_unmatched[:, 1 + has_other_variable] = 1
     data = np.concatenate((data_temp, data_unmatched), axis=0)
-    if with_depth:
+    if other_variable is not None:
         X = data[:, :2].tolist()
     else:
         X = data[:, 0].tolist()
-    y = data[:, 1 + with_depth].tolist()
+    y = data[:, 1 + has_other_variable].tolist()
     assert sum(y) == len(gt_boxes)
     return X, y
 
 
 def create_x_y(
         sld_names, annotations, predictions,
-        iou_th, classes="all", with_depth=True
+        iou_th, classes="all", other_variable="depths"
 ):
     X, y = [], []
     for slide_name in sld_names:
         for roi_name in predictions[slide_name].keys():
             X_, y_ = create_dataset(
                 annotations, predictions, slide_name, roi_name,
-                iou_th=iou_th, classes=classes, with_depth=with_depth
+                iou_th=iou_th, classes=classes, other_variable=other_variable
             )
             X.append(X_)
             y.append(y_)
@@ -298,7 +304,7 @@ def create_x_y(
     for y_ in y:
         y_.extend([0] * (max_len_y - len(y_)))
     for x in X:
-        if with_depth:
+        if other_variable is not None:
             x.extend([[0, 0]] * (max_len_y - len(x)))
         else:
             x.extend([0] * (max_len_y - len(x)))
@@ -310,7 +316,7 @@ def run_ltt_cv(
         annotations, predictions,
         target_precision, iou_th,
         ths_obj, ths_depth, classes,
-        with_depth, delta, step_fst=None
+        other_variable, delta, step_fst=None
 ):
 
     kf = KFold(n_splits=len(predictions))
@@ -329,9 +335,9 @@ def run_ltt_cv(
         }
         X_cal, y_cal = create_x_y(
             sld_cal, annotations, predictions, iou_th,
-            classes, with_depth
+            classes, other_variable
         )
-        if with_depth:
+        if other_variable is not None:
             cal_precisions = compute_2D_precision(
                 lambdas_obj=ths_obj, lambdas_depths=ths_depth,
                 y_pred_proba=X_cal, y=y_cal
@@ -344,7 +350,7 @@ def run_ltt_cv(
             cal_recalls = np.nanmean(cal_recalls, axis=0)
             best_th_obj, best_th_depth = run_ltt(
                 precisions=cal_precisions, delta=delta, y=y_cal,
-                target_precision=target_precision, with_depth=with_depth,
+                target_precision=target_precision, other_variable=other_variable,
                 ths_obj=ths_obj, ths_depth=ths_depth, cal_recalls=cal_recalls,
                 step_fst=step_fst
             )
@@ -358,7 +364,7 @@ def run_ltt_cv(
             cal_precisions = np.nanmean(cal_precisions, axis=0)
             best_th = run_ltt(
                 precisions=cal_precisions, delta=delta, y=y_cal,
-                target_precision=target_precision, with_depth=with_depth,
+                target_precision=target_precision, other_variable=other_variable,
                 ths_obj=ths_obj, step_fst=step_fst
             )
             results[sld_test]["best_th_obj"].append(best_th)
@@ -388,7 +394,7 @@ def run_naive_precision_contorl(
         }
         X_cal, y_cal = create_x_y(
             sld_cal, annotations, predictions, iou_th,
-            classes, with_depth=False
+            classes,  other_variable=None
         )
 
         cal_precisions = compute_precision(
