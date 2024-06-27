@@ -7,7 +7,190 @@ from scipy.stats import binom
 from sklearn.model_selection import KFold
 from tqdm import tqdm
 
-from utils.metrics import match_annotations_and_predictions, compute_precision, compute_2D_precision, compute_2D_recall
+from utils.metrics import match_annotations_and_predictions, compute_precision, compute_nD_precision, compute_nD_recall
+
+
+def _select_boxes_classe(boxes, classes, class_, scores=None, other_variables_values=None):
+    index_class = np.array([i in class_ for i in classes])
+    other_variables_values_class = {}
+    if len(index_class) > 0:
+        boxes = boxes[index_class]
+        classes = classes[index_class]
+        if scores is not None:
+            scores = scores[index_class]
+        if other_variables_values is not None:
+            for ov in other_variables_values.keys():
+                other_variables_values_class[ov] = other_variables_values[ov][index_class]
+    else:
+        boxes = []
+        classes = []
+        if scores is not None:
+            scores = []
+        if other_variables_values is not None:
+            for ov in other_variables_values.keys():
+                other_variables_values_class[ov] = []
+    if scores is not None:
+        return boxes, classes, scores, other_variables_values_class
+    else:
+        return boxes, classes
+
+
+def _create_dataset(
+        annotations, predictions, slide_name,
+        roi_name, iou_th, variables, classes="all"
+):
+    n_variables = len(variables)
+    gt_boxes = np.array(annotations[slide_name][roi_name]["bboxes"])
+    gt_classes = np.array(annotations[slide_name][roi_name]["classes"])
+    pred_boxes = np.array(predictions[slide_name][roi_name]["bboxes"])
+    pred_classes = np.array(predictions[slide_name][roi_name]["classes"])
+    pred_scores = np.array(predictions[slide_name][roi_name]["scores"])
+    pred_classes = np.array(predictions[slide_name][roi_name]["classes"])
+    variables_values = {}
+    for variable in variables:
+        variables_values[variable] = np.array(predictions[slide_name][roi_name][variable])
+    if classes != "all":
+        gt_boxes, gt_classes = _select_boxes_classe(
+            gt_boxes, gt_classes, classes
+        )
+        pred_boxes, pred_classes, pred_scores, variables_values = _select_boxes_classe(
+            pred_boxes, pred_classes, classes, pred_scores, variables_values
+        )
+
+    matched_annots, matched_preds = match_annotations_and_predictions(
+        gt_boxes, pred_boxes, gt_classes, pred_classes, iou_th
+    )
+    n_unmatched_gt = len(gt_boxes) - len(matched_annots)
+
+    data_temp = np.zeros((len(pred_boxes), n_variables + 1))
+
+    for i, ov in enumerate(variables):
+        data_temp[:, i] = variables_values[ov]
+    data_temp[matched_preds, -1] = 1
+    data_unmatched = np.zeros((n_unmatched_gt,  n_variables + 1))
+    data_unmatched[:, -1] = 1
+    data = np.concatenate((data_temp, data_unmatched), axis=0)
+    X = data[:, :n_variables].tolist()
+    y = data[:, n_variables].tolist()
+    assert sum(y) == len(gt_boxes)
+    return X, y
+
+
+def create_x_y(
+        sld_names, annotations, predictions,
+        iou_th, variables, classes="all"
+):
+    n_variables = len(variables)
+    X, y = [], []
+    for slide_name in sld_names:
+        for roi_name in predictions[slide_name].keys():
+            X_, y_ = _create_dataset(
+                annotations, predictions, slide_name, roi_name,
+                iou_th=iou_th, classes=classes, variables=variables
+            )
+            X.append(X_)
+            y.append(y_)
+    max_len_y = 0
+    for y_ in y:
+        if len(y_) > max_len_y:
+            max_len_y = len(y_)
+
+    for y_ in y:
+        y_.extend([0] * (max_len_y - len(y_)))
+    for x in X:
+            x.extend([[0] * (n_variables)] * (max_len_y - len(x)))
+    return np.array(X), np.array(y)
+
+def run_ltt_cv(
+        annotations, predictions,
+        target_precision, iou_th,
+        ths_dict, classes,
+        delta, correction="bonferroni"
+):
+
+    kf = KFold(n_splits=len(predictions))
+
+    slide_names = list(predictions.keys())
+    results = {}
+
+    for cal_index, test_index in tqdm(
+        kf.split(slide_names), total=kf.get_n_splits()
+    ):
+        sld_cal = np.array(slide_names)[cal_index]
+        sld_test = np.array(slide_names)[test_index][0]
+        results[sld_test] = {}
+        X_cal, y_cal = create_x_y(
+            sld_cal, annotations, predictions, iou_th,
+            ths_dict.keys(), classes
+        )
+        cal_precisions = compute_nD_precision(
+            lambdas=ths_dict.values(),
+            y_pred_proba=X_cal, y=y_cal
+        )
+        cal_precisions = np.nanmean(cal_precisions, axis=0)
+        cal_recalls = compute_nD_recall(
+            lambdas=ths_dict.values(),
+            y_pred_proba=X_cal, y=y_cal
+        )
+        cal_recalls = np.nanmean(cal_recalls, axis=0)
+        best_ths = run_ltt(cal_precisions, cal_recalls, y_cal, target_precision, delta, ths_dict.values(), correction=correction)
+
+        for i, k in enumerate(ths_dict.keys()):
+            results[sld_test]["best_th_" + k] = best_ths[i]
+    return results
+
+
+
+def run_ltt(
+        precisions, recalls, y, target_precision, delta,
+        lambdas, correction="bonferroni"
+):
+    """
+    Run the LTT procedure to find the best threshold for the objectness and depth.
+    """
+    alpha = [1 - target_precision]
+    n_obs = len(y)
+    original_shape = precisions.shape
+    risks = 1 - np.array(precisions)
+    if correction == "bonferroni":
+        risks = risks.ravel()
+        valid_index, _ = ltt_bonferoni(risks, alpha, delta, n_obs)
+        valid_index = valid_index[0]
+    elif correction == "fst":
+        if  len(lambdas) == 1:
+            valid_index = ltt_fst_univariate(risks, alpha, delta, n_obs)
+        else:
+            valid_index = ltt_fst_multivariate(risks, alpha, delta, n_obs)
+    else:
+        raise ValueError(
+            "Invalid correction: correction must be either 'bonferroni' or 'fst'."
+        )
+
+    matrix_valid = np.zeros(original_shape)
+    if correction == "fst":
+        for c in valid_index:
+            if isinstance(c, np.int64):
+                matrix_valid[c] = 1
+            else:
+                matrix_valid[tuple(c)] = 1
+    elif correction == "bonferroni":
+        matrix_valid[
+            np.unravel_index(
+                np.array(valid_index),
+                (matrix_valid.shape)
+            )
+        ] = 1
+    else:
+        raise ValueError(
+            "Invalid correction: correction must be either 'bonferroni' or 'fst'."
+        )
+    matrix_valid_recall = matrix_valid * recalls
+    best_recalls_index = np.unravel_index(
+        np.argmax(matrix_valid_recall),
+        (matrix_valid.shape)
+    )
+    
+    return [lambda_[best_recalls_index[i]] for i, lambda_ in enumerate(lambdas)]
 
 
 def ltt_bonferoni(
@@ -30,69 +213,6 @@ def ltt_bonferoni(
         valid_index.append(l_index)
 
     return valid_index, p_values
-
-
-def ltt_fst_depth(
-    r_hat: NDArray,
-    alpha_np: NDArray,
-    delta: Optional[float],
-    n_obs: int,
-) -> Tuple[List[List[Any]], NDArray]:
-
-    if delta is None:
-        raise ValueError(
-            "Invalid delta: delta cannot be None while"
-            + " controlling precision with LTT. "
-        )
-    r_hat_1D = r_hat.ravel()
-    p_values_1D = compute_hoeffdding_bentkus_p_value(r_hat_1D, n_obs, alpha_np)
-    p_values = p_values_1D.reshape(r_hat.shape + (len(alpha_np), ))
-    transposed = False
-    if r_hat.shape[0] < r_hat.shape[1]:
-        p_values = p_values.T
-        transposed = True
-    valid_index = []
-    N = r_hat.shape[1]
-    for i in range(len(alpha_np)):
-        for j in range(N):
-            p_values_j = p_values[:, j, i][::-1]
-            for k, p in enumerate(p_values_j):
-                if p <= delta/N:
-                    k_ordered = len(p_values_j) - k - 1
-                    if transposed:
-                        valid_index.append([j, k_ordered])
-                    else:
-                        valid_index.append([k_ordered, j])
-                else:
-                    break
-
-    return valid_index
-
-
-def ltt_fst_univariate(
-    r_hat: NDArray,
-    alpha_np: NDArray,
-    delta: Optional[float],
-    n_obs: int,
-) -> Tuple[List[List[Any]], NDArray]:
-
-    if delta is None:
-        raise ValueError(
-            "Invalid delta: delta cannot be None while"
-            + " controlling precision with LTT. "
-        )
-    p_values = compute_hoeffdding_bentkus_p_value(r_hat, n_obs, alpha_np)
-    valid_index = []
-    J = np.arange(0, len(r_hat), 10)
-    for i in range(len(alpha_np)):
-        for j in J:
-            if j in valid_index:
-                continue
-            while (j < len(r_hat)) and (p_values[j, i] <= delta/len(J)):
-                valid_index.append(j)
-                j += 1
-
-    return valid_index
 
 
 def compute_hoeffdding_bentkus_p_value(
@@ -133,7 +253,6 @@ def compute_hoeffdding_bentkus_p_value(
     )
     return hb_p_value
 
-
 def _h1(
     r_hats: NDArray,
     alphas: NDArray
@@ -170,206 +289,61 @@ def _h1(
     elt2 = (1-r_hats) * np.log((1-r_hats)/(1-alphas))
     return elt1 + elt2
 
+def ltt_fst_univariate(
+    r_hat: NDArray,
+    alpha_np: NDArray,
+    delta: Optional[float],
+    n_obs: int,
+) -> Tuple[List[List[Any]], NDArray]:
 
-def run_ltt(precisions, delta, y, target_precision, other_variable, ths_obj, ths_depth=None, cal_recalls=None, step_fst=None):
-    """
-    Run the LTT procedure to find the best threshold for the objectness and depth.
-    """
-    alpha = [1 - target_precision]
-    n_obs = len(y)
-    risks = 1 - np.array(precisions)
-    if step_fst is None:
-        if other_variable is not None:
-            risks = risks.ravel()
-        valid_index, _ = ltt_bonferoni(risks, alpha, delta, n_obs)
-        valid_index = valid_index[0]
-    else:
-        if  other_variable is not None:
-            valid_index = ltt_fst_depth(risks, alpha, delta, n_obs)
-        else:
-            valid_index = ltt_fst_univariate(risks, alpha, delta, n_obs)
-    if  other_variable is not None:
-
-        matrix_valid = np.zeros((len(ths_obj), len(ths_depth)))
-        if step_fst is not None:
-            for c in valid_index:
-                matrix_valid[c[0], c[1]] = 1
-        else:
-            matrix_valid[
-                np.unravel_index(
-                    np.array(valid_index),
-                    (matrix_valid.shape)
-                )
-            ] = 1
-        matrix_valid_recall = matrix_valid * cal_recalls
-        best_recall = np.unravel_index(
-            np.argmax(matrix_valid_recall),
-            (matrix_valid.shape)
+    if delta is None:
+        raise ValueError(
+            "Invalid delta: delta cannot be None while"
+            + " controlling precision with LTT. "
         )
-        best_th_obj, best_th_depth = ths_obj[best_recall[0]], \
-            ths_depth[best_recall[1]]
-        return best_th_obj, best_th_depth
-    else:
-        if len(valid_index) == 0:
-            best_th = 1
-        else:
-            valid_index = valid_index[0]
-            best_th = ths_obj[valid_index]
-        return best_th
+    p_values = compute_hoeffdding_bentkus_p_value(r_hat, n_obs, alpha_np)
+    valid_index = []
+    J = np.arange(0, len(r_hat), 10)
+    for i in range(len(alpha_np)):
+        for j in J:
+            if j in valid_index:
+                continue
+            while (j < len(r_hat)) and (p_values[j, i] <= delta/len(J)):
+                valid_index.append(j)
+                j += 1
+
+    return valid_index
 
 
-def select_boxes_classe(boxes, classes, class_, scores=None, depths=None):
-    index_class = np.array([i in class_ for i in classes])
-    if len(index_class) > 0:
-        boxes = boxes[index_class]
-        classes = classes[index_class]
-        if scores is not None:
-            scores = scores[index_class]
-            depths = depths[index_class]
-    else:
-        boxes = []
-        classes = []
-        if scores is not None:
-            scores = []
-            depths = []
-    if scores is not None:
-        return boxes, classes, scores, depths
-    else:
-        return boxes, classes
+def ltt_fst_multivariate(
+    r_hat: NDArray,
+    alpha: float,
+    delta: Optional[float],
+    n_obs: int,
+) -> Tuple[List[List[Any]], NDArray]:
 
-
-def create_dataset(
-        annotations, predictions, slide_name,
-        roi_name, iou_th, other_variable="depths", classes="all"
-):
-    has_other_variable = int(other_variable is not None)
-    gt_boxes = np.array(annotations[slide_name][roi_name]["bboxes"])
-    gt_classes = np.array(annotations[slide_name][roi_name]["classes"])
-    pred_boxes = np.array(predictions[slide_name][roi_name]["bboxes"])
-    pred_classes = np.array(predictions[slide_name][roi_name]["classes"])
-    pred_scores = np.array(predictions[slide_name][roi_name]["scores"])
-    pred_classes = np.array(predictions[slide_name][roi_name]["classes"])
-    if other_variable is not None:
-        other_variable_value = np.array(predictions[slide_name][roi_name][other_variable])
-    else:
-        other_variable_value = np.array(predictions[slide_name][roi_name]["depths"])
-    if classes != "all":
-        gt_boxes, gt_classes = select_boxes_classe(
-            gt_boxes, gt_classes, classes
+    if delta is None:
+        raise ValueError(
+            "Invalid delta: delta cannot be None while"
+            + " controlling precision with LTT. "
         )
-        pred_boxes, pred_classes, pred_scores, other_variable_value = select_boxes_classe(
-            pred_boxes, pred_classes, classes, pred_scores, other_variable_value
-        )
+    r_hat_1D = r_hat.ravel()
+    p_values_1D = compute_hoeffdding_bentkus_p_value(r_hat_1D, n_obs, alpha)
+    p_values = p_values_1D.reshape(r_hat.shape)
+    valid_index = []
+    N = int(r_hat.size / r_hat.shape[0])
+    for j in range(N):
+        j_unraveled = tuple(np.unravel_index(j, r_hat.shape[1:]))
+        indices_p_values = (range(r_hat.shape[0]), ) + j_unraveled
+        p_values_j = p_values[indices_p_values][::-1]
+        for k, p in enumerate(p_values_j):
+            if p <= delta/N:
+                k_ordered = len(p_values_j) - k - 1
+                valid_index.append([k_ordered] + list(j_unraveled))
+            else:
+                break
 
-    matched_annots, matched_preds = match_annotations_and_predictions(
-        gt_boxes, pred_boxes, gt_classes, pred_classes, iou_th
-    )
-    n_unmatched_gt = len(gt_boxes) - len(matched_annots)
-
-    data_temp = np.zeros((len(pred_boxes), 2 + has_other_variable))
-    data_temp[:, 0] = pred_scores
-    if other_variable is not None:
-        data_temp[:, 1] = other_variable_value
-    data_temp[matched_preds, 1 + has_other_variable] = 1
-    data_unmatched = np.zeros((n_unmatched_gt, 2 + has_other_variable))
-    data_unmatched[:, 1 + has_other_variable] = 1
-    data = np.concatenate((data_temp, data_unmatched), axis=0)
-    if other_variable is not None:
-        X = data[:, :2].tolist()
-    else:
-        X = data[:, 0].tolist()
-    y = data[:, 1 + has_other_variable].tolist()
-    assert sum(y) == len(gt_boxes)
-    return X, y
-
-
-def create_x_y(
-        sld_names, annotations, predictions,
-        iou_th, classes="all", other_variable="depths"
-):
-    X, y = [], []
-    for slide_name in sld_names:
-        for roi_name in predictions[slide_name].keys():
-            X_, y_ = create_dataset(
-                annotations, predictions, slide_name, roi_name,
-                iou_th=iou_th, classes=classes, other_variable=other_variable
-            )
-            X.append(X_)
-            y.append(y_)
-    max_len_y = 0
-    for y_ in y:
-        if len(y_) > max_len_y:
-            max_len_y = len(y_)
-
-    for y_ in y:
-        y_.extend([0] * (max_len_y - len(y_)))
-    for x in X:
-        if other_variable is not None:
-            x.extend([[0, 0]] * (max_len_y - len(x)))
-        else:
-            x.extend([0] * (max_len_y - len(x)))
-
-    return np.array(X), np.array(y)
-
-
-def run_ltt_cv(
-        annotations, predictions,
-        target_precision, iou_th,
-        ths_obj, ths_depth, classes,
-        other_variable, delta, step_fst=None
-):
-
-    kf = KFold(n_splits=len(predictions))
-
-    slide_names = list(predictions.keys())
-    results = {}
-
-    for cal_index, test_index in tqdm(
-        kf.split(slide_names), total=kf.get_n_splits()
-    ):
-        sld_cal = np.array(slide_names)[cal_index]
-        sld_test = np.array(slide_names)[test_index][0]
-        results[sld_test] = {
-            "best_th_obj": [],
-            "best_th_depth": [],
-        }
-        X_cal, y_cal = create_x_y(
-            sld_cal, annotations, predictions, iou_th,
-            classes, other_variable
-        )
-        if other_variable is not None:
-            cal_precisions = compute_2D_precision(
-                lambdas_obj=ths_obj, lambdas_depths=ths_depth,
-                y_pred_proba=X_cal, y=y_cal
-            )
-            cal_precisions = np.nanmean(cal_precisions, axis=0)
-            cal_recalls = compute_2D_recall(
-                lambdas_obj=ths_obj, lambdas_depths=ths_depth,
-                y_pred_proba=X_cal, y=y_cal
-            )
-            cal_recalls = np.nanmean(cal_recalls, axis=0)
-            best_th_obj, best_th_depth = run_ltt(
-                precisions=cal_precisions, delta=delta, y=y_cal,
-                target_precision=target_precision, other_variable=other_variable,
-                ths_obj=ths_obj, ths_depth=ths_depth, cal_recalls=cal_recalls,
-                step_fst=step_fst
-            )
-            results[sld_test]["best_th_obj"].append(best_th_obj)
-            results[sld_test]["best_th_depth"].append(best_th_depth)
-        else:
-            cal_precisions = compute_precision(
-                lambdas=ths_obj,
-                y_pred_proba=X_cal[:, :, np.newaxis], y=y_cal
-            )
-            cal_precisions = np.nanmean(cal_precisions, axis=0)
-            best_th = run_ltt(
-                precisions=cal_precisions, delta=delta, y=y_cal,
-                target_precision=target_precision, other_variable=other_variable,
-                ths_obj=ths_obj, step_fst=step_fst
-            )
-            results[sld_test]["best_th_obj"].append(best_th)
-
-    return results
+    return valid_index
 
 
 def run_naive_precision_contorl(
@@ -394,12 +368,12 @@ def run_naive_precision_contorl(
         }
         X_cal, y_cal = create_x_y(
             sld_cal, annotations, predictions, iou_th,
-            classes,  other_variable=None
+            variables=["scores"], classes=classes
         )
 
         cal_precisions = compute_precision(
             lambdas=ths_obj,
-            y_pred_proba=X_cal[:, :, np.newaxis], y=y_cal
+            y_pred_proba=X_cal, y=y_cal
         )
         cal_precisions = np.nanmean(cal_precisions, axis=0)
         best_th = ths_obj[np.argmin(np.abs(cal_precisions - target_precision))]

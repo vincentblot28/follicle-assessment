@@ -1,3 +1,4 @@
+import itertools
 from typing import cast
 
 import numpy as np
@@ -157,27 +158,7 @@ def compute_precision(
     y_pred_proba: NDArray,
     y: NDArray
 ) -> NDArray:
-    """
-    In `MapieMultiLabelClassifier` when `metric_control=precision`,
-    compute the precision per observation for each different
-    thresholds lambdas.
 
-    Parameters
-    ----------
-    y_pred_proba: NDArray of shape (n_samples, n_labels, 1)
-        Predicted probabilities for each label and each observation.
-
-    y: NDArray of shape (n_samples, n_labels)
-        True labels.
-
-    lambdas: NDArray of shape (n_lambdas, )
-        Threshold that permit to compute precision score.
-
-    Returns
-    -------
-    NDArray of shape (n_samples, n_labels, n_lambdas)
-        Risks for each observation and each value of lambda.
-    """
     if y_pred_proba.ndim != 3:
         raise ValueError(
             "y_pred_proba should be a 3d array, got an array of shape "
@@ -233,21 +214,16 @@ def _true_positive(
     return tp
 
 
-def compute_2D_precision(lambdas_obj, lambdas_depths, y_pred_proba, y):
-    """Compute the precision for each observation and each
-    thresholds.
+def _true_positive2(
+    y_pred_th: NDArray,
+    y_repeat: NDArray
+) -> NDArray:
+    """
+    Compute the number of true positive.
 
     Parameters
     ----------
-    lambdas_obj: NDArray of shape (n_lambdas_obj, )
-        Threshold that permit to compute precision score for
-        objective.
-
-    lambdas_depths: NDArray of shape (n_lambdas_depths, )
-        Threshold that permit to compute precision score for
-        depths.
-
-    y_pred_proba: NDArray of shape (n_samples, n_labels, 1)
+    y_pred_proba : NDArray of shape (n_samples, n_labels, 1)
         Predicted probabilities for each label and each observation.
 
     y: NDArray of shape (n_samples, n_labels)
@@ -255,14 +231,42 @@ def compute_2D_precision(lambdas_obj, lambdas_depths, y_pred_proba, y):
 
     Returns
     -------
-    precision_obj: NDArray of shape (n_samples, n_lambdas_obj)
-        Precision for each observation and each value of lambda
-        for objective.
-
-    precision_depths: NDArray of shape (n_samples, n_lambdas_depths)
-        Precision for each observation and each value of lambda
-        for depths.
+    tp: float
+        The number of true positive.
     """
+    tp = (y_pred_th * y_repeat).sum()
+    return tp
+
+
+def compute_nD_precision(lambdas, y_pred_proba, y):
+
+    precisions = np.zeros(tuple([len(y)] + [len(lambda_) for lambda_ in lambdas]))
+    thresholds_combinations = list(itertools.product(*lambdas))
+    for i in range(len(y)):
+        for ths in thresholds_combinations:
+            y_pred_th = (y_pred_proba[i] >= ths).min(axis=1).astype(int)
+            precision = _true_positive2(y_pred_th, y[i]) / y_pred_th.sum()
+            count_rounds = [list(lambda_).index(ths[j]) for j, lambda_ in enumerate(lambdas)]
+            precisions[tuple([i] + count_rounds)] = precision
+    return np.nan_to_num(precisions, nan=1)
+
+
+def compute_nD_recall(lambdas, y_pred_proba, y):
+    
+        recalls = np.zeros(tuple([len(y)] + [len(lambda_) for lambda_ in lambdas]))
+        thresholds_combinations = list(itertools.product(*lambdas))
+
+        for i in range(len(y)):
+            for ths in thresholds_combinations:
+                y_pred_th = (y_pred_proba[i] >= ths).min(axis=1).astype(int)
+                recall = _true_positive2(y_pred_th, y[i]) / y[i].sum()
+                count_rounds = [list(lambda_).index(ths[j]) for j, lambda_ in enumerate(lambdas)]
+                recalls[tuple([i] + count_rounds)] = recall
+        return recalls
+
+
+def compute_2D_precision(lambdas_obj, lambdas_depths, y_pred_proba, y):
+
     precisions = np.zeros((len(y), len(lambdas_obj), len(lambdas_depths)))
     for i, lambda_depth in enumerate(lambdas_depths):
         y_pred_proba_rations = (
@@ -278,35 +282,6 @@ def compute_2D_precision(lambdas_obj, lambdas_depths, y_pred_proba, y):
 
 
 def compute_2D_recall(lambdas_obj, lambdas_depths, y_pred_proba, y):
-    """Compute the precision for each observation and each
-    thresholds.
-
-    Parameters
-    ----------
-    lambdas_obj: NDArray of shape (n_lambdas_obj, )
-        Threshold that permit to compute precision score for
-        objective.
-
-    lambdas_depths: NDArray of shape (n_lambdas_depths, )
-        Threshold that permit to compute precision score for
-        depths.
-
-    y_pred_proba: NDArray of shape (n_samples, n_labels, 1)
-        Predicted probabilities for each label and each observation.
-
-    y: NDArray of shape (n_samples, n_labels)
-        True labels.
-
-    Returns
-    -------
-    precision_obj: NDArray of shape (n_samples, n_lambdas_obj)
-        Precision for each observation and each value of lambda
-        for objective.
-
-    precision_depths: NDArray of shape (n_samples, n_lambdas_depths)
-        Precision for each observation and each value of lambda
-        for depths.
-    """
     recalls = np.zeros((len(y), len(lambdas_obj), len(lambdas_depths)))
     for i, lambda_depth in enumerate(lambdas_depths):
         y_pred_proba_rations = (
