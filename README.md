@@ -8,9 +8,9 @@ Python 3.8+
 
 Install the required packages:
 
-- Via conda:
+- Via poetry:
 ```
-$ conda install -f env.yml
+$ poetry init
 ```
 
 📚 Data Availability
@@ -51,13 +51,26 @@ $ python main/generate_patches_stride_train_val.py
 
 Patches are saved in `02_model_inputs/patches` and corresponding annotations in `02_model_inputs/annotations_efficientdet/patches_annotation_stride_train_val.json` in Pascal VOC data format.
 
-🏋️‍♀️ Train OD models
+🏋️‍♀️ Train models
 ===============
 
-To train EfficientDet algorithm run:
+To train OD algorithms run:
 
 ```
 $ python main/train_efficientdet.py
+$ python main/train_yolo.py
+```
+
+To create the dataset for classifcation run:
+
+```
+$ python main/create_classif_train_dataset.py
+```
+
+To train the classification model:
+
+```
+$ python main/train_classif.py
 ```
 
 If you don't want to retrain the models, weights are available in the zip file, in the 03_model_weights folder.
@@ -65,10 +78,11 @@ If you don't want to retrain the models, weights are available in the zip file, 
 
 📈 Inference
 ===============
-Inference is run at the ovary cut level. To run the EfficientDet inference run
+Inference is run at the ovary cut level. To run the EfficientDet and Yolo inferences run
 
 ```
-$ python main/predict_efficientdet.py
+$ python main/predict_effdet_with_depth_and_classif.py
+$ python main/predict_yolo_with_depth_and_classif.py
 ```
 
 The output of the inference is a `json` file of the following shape:
@@ -79,6 +93,8 @@ The output of the inference is a `json` file of the following shape:
         "roi0": {
             "bboxes": [[xmin, ymin, xmax, ymax], ...],
             "scores": [.5, ...],
+            "depths": [.3, ...],
+            "scores_classif": [.6, ...],
             "classes": ["PMF", ...]
         },
         "roi1": {...},
@@ -97,4 +113,4 @@ Inference files for both model are saved in their respective directories with th
 
 ✅ Run the LTT procedure
 ===============
-The LTT procedure can be run is the notebook : `notebooks/analyse_ltt.ipynb`
+The LTT procedure can be run with the notebooks : `notebooks/analyse_ltt_effdet.ipynb` and `notebooks/analyse_ltt_yolo.ipynb`
