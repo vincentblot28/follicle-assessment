@@ -1,6 +1,15 @@
 data/*
 *.zip
 notebooks/temp.ipynb
+notebooks/no_push
 *.pdf
 *.pyc
-runs/*
+runs
+main/old
+old/
+data*.yml
+*.pt
+*.ckpt
+*.pth
+*.tex
+.vscode
