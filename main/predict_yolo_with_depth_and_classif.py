@@ -24,9 +24,9 @@ from utils.patch_utils import is_not_white, create_img_to_classif_from_box
 
 warnings.filterwarnings("ignore")
 
-MODEL_PATH = "/home/ubuntu/yolo_ultralytics/runs/detect/train5/weights/best.pt"
+MODEL_PATH = "/home/ubuntu/follicle-assessment/model_weights/yolo.pt"
 PATCH_SIZE = 1000
-OVARY_PATH = "/home/ubuntu/folcon/01_ovary_cuts/ovaries_images"
+OVARY_PATH = "/home/ubuntu/ssd/folcon/01_ovary_cuts/ovaries_images"
 CLASS_NAME_VALUES = {0: "PMF", 1: "Primary", 2: "Secondary"}
 BBOXES_SIZE_PARAMS = {
     "PMF": {"width": 200, "height": 200},
@@ -34,12 +34,12 @@ BBOXES_SIZE_PARAMS = {
     "Secondary": {"width": 450, "height": 450}
 }
 IMG_CLASSIF_SIZE = 512
-SAVE_PREDICTIONS_PATH = "/home/ubuntu/folcon/04_model_predictions/yolo/results_classif_2.json"
-DATA_SPLIT_PATH = "/home/ubuntu/folcon/02_model_input/data_split.json"
+SAVE_PREDICTIONS_PATH = "/home/ubuntu/ssd/folcon/04_model_predictions/yolo/results_depth_classif.json"
+DATA_SPLIT_PATH = "/home/ubuntu/ssd/folcon/02_model_input/data_split.json"
 VGG = models.vgg16(pretrained=False)
 num_features = VGG.classifier[6].in_features
 VGG.classifier[6] = nn.Linear(num_features, 2)
-VGG.load_state_dict(torch.load("/home/ubuntu/follicle-assessment/runs/2024-06-23-02-04_lr=1e-06_wd=0.01/2024-06-23-02-04_lr=1e-06_wd=0.01.pth"))
+VGG.load_state_dict(torch.load("/home/ubuntu/follicle-assessment/model_weights/vgg16.pth"))
 VGG.eval()
 test_transform = Compose([
     ToTensor(),
@@ -48,7 +48,7 @@ test_transform = Compose([
 
 
 
-def predict_efficientdet(model_path,
+def predict_yolo(model_path,
                          patch_size: int,
                          ovary_path: str,
                          data_split: Dict,
@@ -57,6 +57,9 @@ def predict_efficientdet(model_path,
                          ) -> Dict[str, Dict[str, Any]]:
 
     model = YOLO(model_path)
+    if torch.cuda.is_available():
+        model.cuda()
+        VGG.cuda()
     predictions = {}
     # for ovary_id in tqdm(os.listdir(os.path.join(os.getcwd(), ovary_path))):
     for ovary_id in tqdm(data_split["test"]):
@@ -100,8 +103,10 @@ def predict_efficientdet(model_path,
                                 boxes_to_classify.append(create_img_to_classif_from_box(new_bbox, cut, IMG_CLASSIF_SIZE))
             if len(boxes_to_classify) > 0:
                 boxes_to_classify = torch.stack([test_transform(box) for box in boxes_to_classify])
+                if torch.cuda.is_available():
+                    boxes_to_classify = boxes_to_classify.cuda()
                 with torch.no_grad():
-                    outputs = F.softmax(VGG(boxes_to_classify))[:, 1].numpy()
+                    outputs = F.softmax(VGG(boxes_to_classify))[:, 1].cpu().numpy()
                     
                 
             depths = compute_prediction_depths(cut, np.array(predictions[ovary_id][roi_name]["bboxes"]), resolution=10)
@@ -115,7 +120,7 @@ if __name__ == "__main__":
     with open(DATA_SPLIT_PATH, "r") as f:
         data_split = json.load(f)
 
-    predictions = predict_efficientdet(
+    predictions = predict_yolo(
         model_path=MODEL_PATH,
         patch_size=PATCH_SIZE,
         ovary_path=OVARY_PATH,
