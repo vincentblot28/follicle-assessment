@@ -4,6 +4,7 @@ import numpy as np
 from mapie._typing import NDArray
 from mapie.utils import check_alpha
 from scipy.stats import binom
+from sklearn.metrics import precision_score, recall_score, f1_score
 from sklearn.model_selection import KFold
 from tqdm import tqdm
 
@@ -105,20 +106,27 @@ def run_ltt_cv(
         annotations, predictions,
         target_precision, iou_th,
         ths_dict, classes,
-        delta, correction="bonferroni"
+        delta, correction="bonferroni",
+        n_split=50
 ):
 
-    kf = KFold(n_splits=len(predictions))
+    # kf = KFold(n_splits=len(predictions))
 
     slide_names = list(predictions.keys())
     results = {}
 
-    for cal_index, test_index in tqdm(
-        kf.split(slide_names), total=kf.get_n_splits()
-    ):
+    for i in tqdm(range(n_split)):
+        cal_index = np.random.choice(
+            range(len(predictions)),
+            int(len(predictions) * 0.8),
+            replace=False
+        )
+        test_index = np.array(
+            [i for i in range(len(predictions)) if i not in cal_index]
+        )
         sld_cal = np.array(slide_names)[cal_index]
-        sld_test = np.array(slide_names)[test_index][0]
-        results[sld_test] = {}
+        sld_test = np.array(slide_names)[test_index]
+        results[str(sld_test)] = {}
         X_cal, y_cal = create_x_y(
             sld_cal, annotations, predictions, iou_th,
             ths_dict.keys(), classes
@@ -134,11 +142,38 @@ def run_ltt_cv(
         )
         cal_recalls = np.nanmean(cal_recalls, axis=0)
         best_ths = run_ltt(cal_precisions, cal_recalls, y_cal, target_precision, delta, ths_dict.values(), correction=correction)
+        if best_ths is not None:
+            for i, k in enumerate(ths_dict.keys()):
+                results[str(sld_test)]["best_th_" + k] = best_ths[i]
+            
+            X_test, y_test = create_x_y(
+                sld_test, annotations, predictions, iou_th,
+                ths_dict.keys(), classes
+            )
+            p, r, f = compute_prf_test(X_test, y_test, best_ths)
+            results[str(sld_test)]["precision"] = p
+            results[str(sld_test)]["recall"] = r
+            results[str(sld_test)]["f1"] = f
+        else:
+            for i, k in enumerate(ths_dict.keys()):
+                results[str(sld_test)]["best_th_" + k] = np.nan
+            results[str(sld_test)]["precision"] = np.nan
+            results[str(sld_test)]["recall"] = np.nan
+            results[str(sld_test)]["f1"] = np.nan
 
-        for i, k in enumerate(ths_dict.keys()):
-            results[sld_test]["best_th_" + k] = best_ths[i]
     return results
 
+def compute_prf_test(X, y, all_ths):
+    X_bool = np.zeros_like(X)
+    for i in range(X.shape[-1]):
+        X_bool[:, :, i][X[:, :, i] >= all_ths[i]] = 1
+    X_th = X_bool.min(axis=2)
+    precisions = [precision_score(y[i], X_th[i], zero_division=1) for i in range(len(y))]
+    recalls = [recall_score(y[i], X_th[i], zero_division=1) for i in range(len(y))]
+    f1s = [f1_score(y[i], X_th[i]) for i in range(len(y))]
+
+    return np.nanmean(precisions), np.nanmean(recalls), np.nanmean(f1s)
+    
 
 
 def run_ltt(
@@ -166,31 +201,35 @@ def run_ltt(
             "Invalid correction: correction must be either 'bonferroni' or 'fst'."
         )
 
-    matrix_valid = np.zeros(original_shape)
-    if correction == "fst":
-        for c in valid_index:
-            if isinstance(c, np.int64):
-                matrix_valid[c] = 1
-            else:
-                matrix_valid[tuple(c)] = 1
-    elif correction == "bonferroni":
-        matrix_valid[
-            np.unravel_index(
-                np.array(valid_index),
-                (matrix_valid.shape)
+    if len(valid_index) > 0:
+        matrix_valid = np.zeros(original_shape)
+        if correction == "fst":
+            for c in valid_index:
+                if isinstance(c, np.int64):
+                    matrix_valid[c] = 1
+                else:
+                    matrix_valid[tuple(c)] = 1
+        elif correction == "bonferroni":
+            matrix_valid[
+                np.unravel_index(
+                    np.array(valid_index),
+                    (matrix_valid.shape)
+                )
+            ] = 1
+        else:
+            raise ValueError(
+                "Invalid correction: correction must be either 'bonferroni' or 'fst'."
             )
-        ] = 1
-    else:
-        raise ValueError(
-            "Invalid correction: correction must be either 'bonferroni' or 'fst'."
+        matrix_valid_recall = matrix_valid * recalls
+        best_recalls_index = np.unravel_index(
+            np.argmax(matrix_valid_recall),
+            (matrix_valid.shape)
         )
-    matrix_valid_recall = matrix_valid * recalls
-    best_recalls_index = np.unravel_index(
-        np.argmax(matrix_valid_recall),
-        (matrix_valid.shape)
-    )
+        
+        return [lambda_[best_recalls_index[i]] for i, lambda_ in enumerate(lambdas)]
     
-    return [lambda_[best_recalls_index[i]] for i, lambda_ in enumerate(lambdas)]
+    else:
+        return None
 
 
 def ltt_bonferoni(
@@ -302,6 +341,7 @@ def ltt_fst_univariate(
             + " controlling precision with LTT. "
         )
     p_values = compute_hoeffdding_bentkus_p_value(r_hat, n_obs, alpha_np)
+    p_values = p_values
     valid_index = []
     J = np.arange(0, len(r_hat), 10)
     for i in range(len(alpha_np)):
@@ -349,23 +389,25 @@ def ltt_fst_multivariate(
 def run_naive_precision_contorl(
         annotations, predictions,
         target_precision, iou_th,
-        ths_obj, classes
+        ths_obj, classes, n_split=50
 ):
-
-    kf = KFold(n_splits=len(predictions))
 
     slide_names = list(predictions.keys())
     results = {}
 
-    for cal_index, test_index in tqdm(
-        kf.split(slide_names), total=kf.get_n_splits()
-    ):
+    for i in tqdm(range(n_split)):
+        cal_index = np.random.choice(
+            range(len(predictions)),
+            int(len(predictions) * 0.8),
+            replace=False
+        )
+        test_index = np.array(
+            [i for i in range(len(predictions)) if i not in cal_index]
+        )
         sld_cal = np.array(slide_names)[cal_index]
-        sld_test = np.array(slide_names)[test_index][0]
-        results[sld_test] = {
-            "best_th_obj": [],
-            "best_th_depth": [],
-        }
+        sld_test = np.array(slide_names)[test_index]
+        results[str(sld_test)] = {}
+
         X_cal, y_cal = create_x_y(
             sld_cal, annotations, predictions, iou_th,
             variables=["scores"], classes=classes
@@ -376,8 +418,17 @@ def run_naive_precision_contorl(
             y_pred_proba=X_cal, y=y_cal
         )
         cal_precisions = np.nanmean(cal_precisions, axis=0)
-        best_th = ths_obj[np.argmin(np.abs(cal_precisions - target_precision))]
+        best_ths = ths_obj[np.argmin(np.abs(cal_precisions - target_precision))]
 
-        results[sld_test]["best_th_obj"].append(best_th)
+        results[str(sld_test)]["best_th_obj"] = best_ths
+
+        X_test, y_test = create_x_y(
+            sld_test, annotations, predictions, iou_th,
+            variables=["scores"], classes=classes
+        )
+        p, r, f = compute_prf_test(X_test, y_test, [best_ths])
+        results[str(sld_test)]["precision"] = p
+        results[str(sld_test)]["recall"] = r
+        results[str(sld_test)]["f1"] = f
 
     return results
