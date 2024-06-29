@@ -314,8 +314,8 @@ class EfficientDetModel(LightningModule):
             [
                 self.inference_tfms(
                     image=np.array(image, dtype=np.float32),
-                    labels=np.ones(1),
-                    bboxes=np.array([[0, 0, 1, 1]]),
+                    # labels=np.ones(1),
+                    # bboxes=np.array([[0, 0, 1, 1]]),
                 )["image"]
                 for image in images
             ]
