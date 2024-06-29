@@ -16,7 +16,7 @@ $ poetry init
 📚 Data Availability
 ===============
 
-Download the file [here](https://drive.google.com/file/d/1Ry0w6sU22-kpv2Z31HfSYUEFlvKYuXkO/view?usp=sharing) and then run 
+Download the file [here](https://drive.google.com/file/d/1LE4-wlmDgepQXcGTwBw1Spb_FecZPaD0/view?usp=sharing) and then run 
 
 ```
 $ unzip ovary_cut.zip
