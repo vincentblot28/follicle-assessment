@@ -128,10 +128,11 @@ def compute_prediction_depths(img, predictions, resolution):
         preds_roi_center[:, 1] = np.minimum(preds_roi_center[:, 1], img.shape[1] - 1)
 
         # Get thedepth of each prediction
-        depths = get_depths(
+        depths = 1 - get_depths(
             contour_max, mask_filled,
             preds_roi_center, factor=int(100 / resolution)
         )
+
     else:
         depths = np.array([])
 
